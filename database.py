@@ -14,7 +14,7 @@ def init_db():
         )
     ''')
 
-    # 2. Tabla de Propuestas (Arriendos, Vuelos, Panoramas)
+    # 2. Tabla de Propuestas
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +22,10 @@ def init_db():
             title TEXT NOT NULL,
             url TEXT NOT NULL,
             image_url TEXT,
+            description TEXT, -- ¡NUEVA COLUMNA!
             price REAL,
             status TEXT DEFAULT 'pending',
-            required_votes INTEGER DEFAULT 4, -- Aquí defines si es el viaje de 4 o 15 personas
+            required_votes INTEGER DEFAULT 2,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (proposed_by_id) REFERENCES users(id)
         )

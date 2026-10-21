@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organizador para viajes </title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #FDF2F8;
+            --card-bg: #FFFFFF;
+            --primary: #F472B6;
+            --text-dark: #4B5563;
+            --success: #34D399;
+            --danger: #F87171;
+        }
+        body { font-family: 'Nunito', sans-serif; background-color: var(--bg-color); color: var(--text-dark); margin: 0; padding: 20px; text-align: center; }
+        h1 { font-family: 'Press Start 2P', cursive; font-size: 1.5rem; color: var(--primary); margin-bottom: 10px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        
+        /* Sección de perfil superior */
+        .user-profile { text-align: right; margin-bottom: 20px; font-weight: bold; color: var(--primary); }
+        .btn-small { font-size: 0.8rem; background: #FCE7F3; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; margin-left: 10px; color: var(--primary); }
+        .btn-small:hover { background: #FBCFE8; }
+
+        .form-box { background: var(--card-bg); padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 30px; border: 2px dashed #FBCFE8; }
+        input, button { padding: 10px; margin: 5px; border-radius: 8px; border: 1px solid #E5E7EB; font-family: 'Nunito', sans-serif; }
+        input[type="url"] { width: 70%; }
+        button.btn-add { background-color: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }
+        button.btn-add:hover { background-color: #DB2777; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+        .card { background: var(--card-bg); border-radius: 15px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); transition: transform 0.2s; }
+        .card:hover { transform: translateY(-5px); }
+        .card img { width: 100%; height: 150px; object-fit: cover; }
+        .card-content { padding: 15px; }
+        .card-title { font-weight: bold; font-size: 1.1rem; margin-bottom: 5px; }
+        .card-price { color: var(--success); font-weight: bold; font-size: 0.9rem;}
+        
+        .vote-buttons { display: flex; justify-content: space-around; padding: 10px; border-top: 1px solid #F3F4F6; }
+        .btn-vote { border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 1.2rem; cursor: pointer; transition: transform 0.2s; }
+        .btn-yes { background-color: #D1FAE5; color: var(--success); }
+        .btn-no { background-color: #FEE2E2; color: var(--danger); }
+        .btn-vote:hover { transform: scale(1.1); }
+        .status-badge { background-color: #FEF3C7; padding: 5px 10px; border-radius: 10px; font-size: 0.8rem; font-weight: bold; color: #D97706; }
+        .status-approved { background-color: #D1FAE5; color: #059669; }
+
+        /* Estilos del Modal (Ventana Emergente) */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: var(--card-bg); margin: 10% auto; padding: 20px; border-radius: 15px; width: 80%; max-width: 500px; text-align: left; position: relative;}
+        .close-btn { position: absolute; right: 20px; top: 15px; font-size: 1.5rem; cursor: pointer; border: none; background: none; color: var(--text-dark);}
+        .modal-img { width: 100%; border-radius: 10px; margin-top: 10px; max-height: 250px; object-fit: cover;}
+        .btn-link { display: block; text-align: center; background: var(--primary); color: white; padding: 10px; border-radius: 8px; text-decoration: none; margin-top: 15px; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="user-profile" id="userProfile">
+        <span id="welcomeText"></span>
+        <button class="btn-small" onclick="cambiarUsuario()">Cambiar</button>
+    </div>
+
+    <h1>Organizador para viajes</h1>
+
+    <!-- El Modal Oculto -->
+    <div id="infoModal" class="modal">
+        <div class="modal-content">
+            <button class="close-btn" onclick="cerrarModal()">✖️</button>
+            <h3 id="modalTitle" style="margin-top: 0; color: var(--primary);"></h3>
+            <img id="modalImg" class="modal-img" src="">
+            <p id="modalDesc" style="font-size: 0.95rem; line-height: 1.5;"></p>
+            <a id="modalLink" href="" target="_blank" class="btn-link">Ver galería en sitio web ✈️</a>
+        </div>
+    </div>
+    
+    <!-- El formulario ya no pide el nombre -->
+    <div class="form-box">
+        <h3>✨ Proponer una idea</h3>
+        <input type="url" id="linkUrl" placeholder="Pega el link de Airbnb/Booking aquí...">
+        <button class="btn-add" onclick="agregarPropuesta()">Enviar al tablón</button>
+    </div>
+
+    <div class="grid" id="proposalsGrid"></div>
+</div>
+
+<script>
+    let currentUser = "";
+
+    // 1. Identificar al usuario usando la memoria del navegador
+    function verificarUsuario() {
+        currentUser = localStorage.getItem("viajeroName");
+        if (!currentUser) {
+            currentUser = prompt("¡Bienvenido! 🌸 Ingresa tu nombre o apodo:");
+            if (!currentUser) currentUser = "Granjero Anónimo";
+            localStorage.setItem("viajeroName", currentUser);
+        }
+        document.getElementById("welcomeText").innerText = `Hola, ${currentUser} 🍄`;
+        cargarPropuestas();
+    }
+
+    function cambiarUsuario() {
+        localStorage.removeItem("viajeroName");
+        verificarUsuario();
+    }
+
+    // 2. Cargar las tarjetas
+    async function cargarPropuestas() {
+        const grid = document.getElementById('proposalsGrid');
+        grid.innerHTML = '<p>Cargando ideas... 🍄</p>';
+        
+        const response = await fetch('/proposals');
+        const proposals = await response.json();
+        
+        grid.innerHTML = '';
+        proposals.forEach(prop => {
+            const isApproved = prop.status === 'approved';
+            const isRejected = prop.status === 'rejected'; // NUEVO: Identificamos si fue rechazada
+            
+            grid.innerHTML += `
+                <div class="card" style="${isRejected ? 'opacity: 0.7;' : ''}"> <!-- Si se rechaza, se ve un poco transparente -->
+                    <img src="${prop.image_url || 'https://via.placeholder.com/250x150?text=Sin+Foto'}" alt="Foto">
+                    <div class="card-content">
+                        <button onclick="borrarPropuesta(${prop.id})" style="background: none; border: none; font-size: 1.2rem; float: right; cursor: pointer;" title="Borrar">🗑️</button>
+                        
+                        <div class="card-title">${prop.title}</div>
+                        <button class="btn-small" style="margin: 5px 0 10px 0; width: 100%;" onclick="abrirModal('${prop.title.replace(/'/g, "\\'")}', '${prop.image_url}', '${(prop.description || '').replace(/'/g, "\\'")}', '${prop.url}')">Ver detalles 🔍</button>
+                        <div class="card-price">Idea de: ${prop.proposed_by_name}</div>
+                        
+                        <div style="margin-top: 10px;">
+                            <!-- NUEVO: Lógica visual para la etiqueta de estado -->
+                            <span class="status-badge" style="${isApproved ? 'background-color: #D1FAE5; color: #059669;' : isRejected ? 'background-color: #FEE2E2; color: #DC2626;' : ''}">
+                                ${isApproved ? '¡Aprobado por todos! 🌟' : isRejected ? 'Descartado ❌' : 'En votación ⏳'}
+                            </span>
+                        </div>
+
+                        <div style="margin-top: 15px; font-size: 0.85rem; background: #F9FAFB; padding: 8px; border-radius: 8px;">
+                            <div style="color: var(--success); margin-bottom: 3px;">
+                                ⭐ A favor: <strong>${prop.yes_votes}</strong> de ${prop.required_votes}
+                            </div>
+                            <div style="color: var(--danger);">
+                                ✖️ En contra: <strong>${prop.no_votes}</strong>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- NUEVO: Ocultar los botones si la idea ya fue aprobada O rechazada -->
+                    ${(!isApproved && !isRejected) ? `
+                    <div class="vote-buttons">
+                        <button class="btn-vote btn-no" onclick="votar(${prop.id}, 'shipping_bin')" title="Descartar">✖️</button>
+                        <button class="btn-vote btn-yes" onclick="votar(${prop.id}, 'stardrop')" title="¡Me encanta!">⭐</button>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        });
+    }
+
+    // 3. Agregar propuesta (usa el nombre guardado automáticamente)
+    async function agregarPropuesta() {
+        const url = document.getElementById('linkUrl').value;
+        if(!url) { alert('Falta el enlace 🌸'); return; }
+
+        const btn = document.querySelector('.btn-add');
+        btn.innerText = 'Buscando info...';
+
+        await fetch('/proposals', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ user_name: currentUser, url: url })
+        });
+
+        document.getElementById('linkUrl').value = '';
+        btn.innerText = 'Enviar al tablón';
+        cargarPropuestas();
+    }
+
+    // 4. Votar (ya no pregunta el nombre, usa el guardado)
+    async function votar(proposalId, tipoVoto) {
+        const response = await fetch('/votes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ proposal_id: proposalId, user_name: currentUser, vote_type: tipoVoto })
+        });
+        
+        if(response.status === 400) {
+            alert("¡Ups! Ya votaste por esta opción. 🌸");
+        } else {
+            cargarPropuestas();
+        }
+    }
+
+    // 5. Borrar propuesta
+    async function borrarPropuesta(proposalId) {
+        if (confirm("¿Estás seguro de que quieres borrar esta idea? 🗑️")) {
+            await fetch(`/proposals/${proposalId}`, {
+                method: 'DELETE'
+            });
+            cargarPropuestas(); // Recarga la página automáticamente
+        }
+    }
+
+    // Iniciar
+    verificarUsuario();
+
+    // Funciones del Modal
+    function abrirModal(title, img, desc, url) {
+        document.getElementById('modalTitle').innerText = title;
+        document.getElementById('modalImg').src = img || 'https://via.placeholder.com/250x150?text=Sin+Foto';
+        document.getElementById('modalDesc').innerText = desc || "No hay más detalles disponibles.";
+        document.getElementById('modalLink').href = url;
+        document.getElementById('infoModal').style.display = 'block';
+    }
+
+    function cerrarModal() {
+        document.getElementById('infoModal').style.display = 'none';
+    }
+
+    // Cerrar el modal si hacen clic fuera de la caja blanca
+    window.onclick = function(event) {
+        if (event.target == document.getElementById('infoModal')) {
+            cerrarModal();
+        }
+    }
+</script>
+
+</body>
+</html>
