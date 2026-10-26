@@ -19,13 +19,16 @@ def init_db():
         CREATE TABLE IF NOT EXISTS proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             proposed_by_id INTEGER,
+            category TEXT NOT NULL,
             title TEXT NOT NULL,
             url TEXT NOT NULL,
             image_url TEXT,
-            description TEXT, -- ¡NUEVA COLUMNA!
+            description TEXT, 
             price REAL,
             status TEXT DEFAULT 'pending',
             required_votes INTEGER DEFAULT 2,
+            lat REAL, 
+            lon REAL, 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (proposed_by_id) REFERENCES users(id)
         )
