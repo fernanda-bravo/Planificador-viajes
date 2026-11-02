@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import sqlite3
 import re
+import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -82,60 +83,107 @@ def create_user(user: UserCreate):
     conn.close()
     return {"id": user_id, "name": user.name, "mensaje": "¡Granjero registrado con éxito!"}
 
+def obtener_foto_rapidapi(nombre_lugar: str):
+    url = "https://local-business-data.p.rapidapi.com/search" 
+    querystring = {"query": nombre_lugar, "language": "es", "region": "cl"} 
+    
+    headers = {
+        "X-RapidAPI-Key": "bb98f7bdc3msh98b4841439bb8a6p16e247jsna6107a6b9ba1", # <- ¡Tu clave real!
+        "X-RapidAPI-Host": "local-business-data.p.rapidapi.com"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=querystring, timeout=5)
+        data = response.json()
+        
+        if "data" in data and len(data["data"]) > 0:
+            primer_resultado = data["data"][0]
+            urls_extraidas = []
+            
+            # Entramos directo a la caja que ya sabemos que funciona
+            if "photos_sample" in primer_resultado:
+                for item in primer_resultado["photos_sample"]:
+                    # Revisamos cada diccionario dentro de la lista
+                    if isinstance(item, dict):
+                        for valor in item.values():
+                            if isinstance(valor, str) and valor.startswith("http"):
+                                urls_extraidas.append(valor)
+                                break # Solo sacamos un link por foto para no repetir
+            
+            if urls_extraidas:
+                print(f"📸 ¡{len(urls_extraidas)} fotos atrapadas!")
+                # Unimos un máximo de 4 fotos separadas por el símbolo |
+                return "|".join(urls_extraidas[:4])
+
+        return ""
+        
+    except Exception as e:
+        print(f"Error conectando con RapidAPI: {e}")
+        return ""
+        
+    except Exception as e:
+        print(f"Error conectando con RapidAPI: {e}")
+        return ""
+
 def scrape_link_data(url: str):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
         response = requests.get(url, headers=headers, timeout=5)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 1. Buscar el título
-        og_title = soup.find("meta", property="og:title")
-        title = og_title["content"] if og_title else soup.title.string if soup.title else "Link Propuesto"
+        # --- NUEVA EXTRACCIÓN DE NOMBRE INFALIBLE ---
+        nombre_lugar = ""
         
-        if "Google Maps" in title:
-            title = title.replace(" - Google Maps", "").replace("Google Maps", "Lugar en Maps")
+        # Estrategia 1: Robar el nombre directo del link expandido (ej: /place/Hotel+Algarrobo/)
+        import urllib.parse
+        match_nombre = re.search(r'/place/([^/]+)/', response.url)
+        if match_nombre:
+            nombre_lugar = urllib.parse.unquote(match_nombre.group(1).replace('+', ' '))
             
-        # 2. Buscar imagen y descripción
-        og_image = soup.find("meta", property="og:image")
-        image_url = og_image["content"] if og_image else ""
+        # Estrategia 2: Respaldo por si falla el link
+        if not nombre_lugar:
+            og_title = soup.find("meta", property="og:title")
+            title_html = og_title["content"] if og_title else soup.title.string if soup.title else ""
+            nombre_lugar = title_html.replace(" - Google Maps", "").replace("Google Maps", "").strip()
+
+        print(f"🔎 Nombre extraído para buscar foto: '{nombre_lugar}'")
+
+        # --- PEDIR LA FOTO A LA API ---
+        image_url = ""
+        if nombre_lugar and nombre_lugar.lower() != "lugar en maps":
+            image_url = obtener_foto_rapidapi(nombre_lugar)
+            
+        # EL ARREGLO: Solo usamos la imagen fea del mapa si RapidAPI no encontró nada
+        if not image_url:
+            print("⚠️ RapidAPI no trajo foto, usando la del mapa por defecto.")
+            og_image = soup.find("meta", property="og:image")
+            image_url = og_image["content"] if og_image else ""
         
+        # 2. Buscar descripción
         og_desc = soup.find("meta", property="og:description")
         description = og_desc["content"] if og_desc else "Ver detalles en el enlace."
         
         lat, lon = None, None
         
         # --- LA MAGIA DE LAS COORDENADAS ---
+        match_exacto = re.search(r'!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', response.url) or re.search(r'!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)', url)
+        match_maps = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', response.url) or re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url)
         
-        # Caso A: Si es Google Maps, la coordenada viene en la URL (@lat,lon)
-        match_maps = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url)
-        if match_maps:
+        if match_exacto:
+            lat = float(match_exacto.group(1))
+            lon = float(match_exacto.group(2))
+        elif match_maps:
             lat = float(match_maps.group(1))
             lon = float(match_maps.group(2))
-            
-        # Caso B: Si es Airbnb, aplicamos el truco de cortar el texto del título
-        elif "airbnb" in url.lower():
-            try:
-                # Buscamos el último " en " y cortamos hasta " - Airbnb"
-                # Ej: "...en arriendo en Algarrobo, Chile - Airbnb" -> "Algarrobo, Chile"
-                if " en " in title:
-                    lugar_extraido = title.split(" en ")[-1].replace(" - Airbnb", "").strip()
-                    print(f"📍 Detectado lugar en Airbnb: {lugar_extraido}") # Se verá en tu terminal de VSCode
-                    
-                    # Llamamos automáticamente al mapa gratuito con el texto que extrajimos
-                    headers_nom = {"User-Agent": "PlanificadorViajeFamiliar/1.0"}
-                    res = requests.get("https://nominatim.openstreetmap.org/search", params={"q": lugar_extraido, "format": "json", "limit": 1}, headers=headers_nom, timeout=5)
-                    data = res.json()
-                    if data:
-                        lat = float(data[0]["lat"])
-                        lon = float(data[0]["lon"])
-            except Exception as e:
-                print(f"No se pudo extraer la ubicación automática de Airbnb: {e}")
                 
-        return {"title": title[:60], "image_url": image_url, "description": description, "lat": lat, "lon": lon}
+        # Usamos el nombre real para el título de la tarjeta
+        titulo_final = nombre_lugar[:60] if nombre_lugar else "Lugar en Maps"
+        
+        return {"title": titulo_final, "image_url": image_url, "description": description, "lat": lat, "lon": lon}
     except Exception as e:
         print(f"Error de scraping general: {e}")
         return {"title": "Enlace de viaje", "image_url": "", "description": "", "lat": None, "lon": None}
-    
+
 @app.post("/proposals")
 def create_proposal(prop: ProposalCreate):
     if not prop.title or not prop.image_url:
@@ -146,18 +194,7 @@ def create_proposal(prop: ProposalCreate):
         prop.lat = prop.lat or scraped_data.get("lat")
         prop.lon = prop.lon or scraped_data.get("lon")
 
-    # MAGIA NUEVA: Si el link (ej: Airbnb) no traía coordenadas, pero escribieron un lugar
-    if not prop.lat and not prop.lon and prop.location_name:
-        try:
-            # Usamos el motor de búsqueda gratuito de OpenStreetMap
-            headers = {"User-Agent": "PlanificadorViajeFamiliar/1.0"}
-            res = requests.get(f"https://nominatim.openstreetmap.org/search?q={prop.location_name}&format=json&limit=1", headers=headers)
-            data = res.json()
-            if data:
-                prop.lat = float(data[0]["lat"])
-                prop.lon = float(data[0]["lon"])
-        except Exception as e:
-            print(f"No se pudo encontrar la ubicación: {e}")
+   
 
     conn = get_db()
     cursor = conn.cursor()

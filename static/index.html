@@ -168,8 +168,7 @@
         <select id="propCategory" style="width: 100%; margin-bottom: 10px;">
             <!-- Las opciones se llenarán solas por JavaScript dependiendo de la Fase -->
         </select>
-        <input type="url" id="linkUrl" placeholder="Pega el link aquí..." style="width: 100%; box-sizing: border-box;">
-        <input type="text" id="locationName" placeholder="Ubicación mapa (Ej: Maitencillo) - Opcional" style="width: 100%; box-sizing: border-box; font-size: 0.8rem; margin-bottom: 10px;">
+        <input type="url" id="linkUrl" placeholder="Pega el link de Google Maps aquí..." style="width: 100%; box-sizing: border-box;">
         <button class="btn-add" style="width: 100%; margin-top: 10px;" onclick="agregarPropuesta()">Enviar al tablón</button>
     </div>
 
@@ -207,11 +206,28 @@
         verificarUsuario();
     }
 
+    // Este objeto recordará en qué número de foto va cada tarjeta
+    window.estadoGalerias = {};
+
+    // Función para avanzar o retroceder la foto
+    function cambiarFoto(evento, id, direccion) {
+        evento.stopPropagation(); // Evita clics indeseados en otros elementos
+        const galeria = window.estadoGalerias[id];
+        
+        galeria.indice += direccion;
+        // Si llegamos al final, volveturnmos a la primera
+        if (galeria.indice >= galeria.fotos.length) galeria.indice = 0;
+        // Si retrocedemos en la primera, vamos a la última
+        if (galeria.indice < 0) galeria.indice = galeria.fotos.length - 1;
+        
+        document.getElementById(`foto-${id}`).src = galeria.fotos[galeria.indice];
+    }
+
     async function cargarPropuestas() {
         const grid = document.getElementById('proposalsGrid');
         grid.innerHTML = '<p style="font-family: \'Press Start 2P\', cursive; font-size: 0.8rem; color: var(--primary);">Cargando tablón... 🍄</p>';
         
-        const response = await fetch('/proposals');
+        const response = await fetch('/proposals?t=' + new Date().getTime());
         const proposals = await response.json();
         
         // --- NUEVA LÓGICA DE FASES ---
@@ -287,12 +303,37 @@
         propuestasAMostrar.forEach(prop => {
             const isApproved = prop.status === 'approved';
             const isRejected = prop.status === 'rejected';
-            // Si es el alojamiento ganador, le ponemos una clase CSS especial
             const isWinnerCard = (prop.id === alojamientoGanador?.id);
             
+            // --- 1. PREPARAMOS LA GALERÍA ---
+            let galeriaHTML = '';
+            let primeraFoto = ''; 
+            
+            if (prop.image_url && prop.image_url !== "null") {
+                const fotos = prop.image_url.split("|");
+                primeraFoto = fotos[0];
+                window.estadoGalerias[prop.id] = { fotos: fotos, indice: 0 };
+                
+                if (fotos.length > 1) {
+                    galeriaHTML = `
+                    <div style="position: relative; width: 100%; height: 150px; border-radius: 10px 10px 0 0; overflow: hidden; background: #ffe4e1;">
+                        <img id="foto-${prop.id}" src="${fotos[0]}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.onerror=null; this.src='https://via.placeholder.com/300x150?text=Bloqueada+por+Google'">
+                        
+                        <button onclick="cambiarFoto(event, ${prop.id}, -1)" style="position: absolute; left: 5px; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.85); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-size: 12px; font-weight: bold; color: #ff85a2; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">◀</button>
+                        
+                        <button onclick="cambiarFoto(event, ${prop.id}, 1)" style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.85); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; font-size: 12px; font-weight: bold; color: #ff85a2; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">▶</button>
+                    </div>`;
+                } else if (fotos.length === 1 && fotos[0] !== "") {
+                    galeriaHTML = `<img src="${fotos[0]}" style="width: 100%; height: 150px; object-fit: cover; border-radius: 10px 10px 0 0; background: #ffe4e1;" onerror="this.onerror=null; this.src='https://via.placeholder.com/300x150?text=Bloqueada+por+Google'">`;
+                }
+            }
+            // ------------------------------------------------
+            // ------------------------------------------------
+            // 2. DIBUJAMOS LA TARJETA
             grid.innerHTML += `
                 <div class="card ${isWinnerCard ? 'winner' : ''}" style="${isRejected ? 'opacity: 0.6; filter: grayscale(50%);' : ''}">
-                    <img src="${prop.image_url || 'https://via.placeholder.com/250x150/FDF2F8/F472B6?text=Sin+Foto'}" alt="Foto">
+                    ${galeriaHTML}
+                    
                     <div class="card-content">
                         <div style="float: right;">
                             ${isWinnerCard ? `<span style="font-size: 1.2rem; margin-right: 5px;" title="Lugar Elegido">👑</span>` : ''}
@@ -301,7 +342,9 @@
                         
                         <div style="font-family: 'Press Start 2P', cursive; font-size: 0.6rem; color: var(--primary); margin-bottom: 8px;">${prop.category}</div>
                         <div class="card-title">${prop.title}</div>
-                        <button class="btn-small" style="margin: 5px 0 10px 0; width: 100%; box-sizing: border-box;" onclick="abrirModal('${prop.title.replace(/'/g, "\\'")}', '${prop.image_url}', '${(prop.description || '').replace(/'/g, "\\'")}', '${prop.url}')">Detalles 🔍</button>
+                        
+                        <button class="btn-small" style="margin: 5px 0 10px 0; width: 100%; box-sizing: border-box;" onclick="abrirModal('${prop.title.replace(/'/g, "\\'")}', '${primeraFoto}', '${(prop.description || '').replace(/'/g, "\\'")}', '${prop.url}')">Detalles 🔍</button>
+                        
                         <div class="card-price">Idea de:<br>${prop.proposed_by_name}</div>
                         
                         <div style="margin-top: 15px;">
@@ -334,15 +377,19 @@
     async function agregarPropuesta() {
         const url = document.getElementById('linkUrl').value;
         const category = document.getElementById('propCategory').value;
-        
-        // Lectura segura: si el cajón existe saca el valor, si no, lo deja en blanco
         const customImgEl = document.getElementById('customImgUrl');
         const customImg = customImgEl ? customImgEl.value : "";
         
-        const locationEl = document.getElementById('locationName');
-        const locationName = locationEl ? locationEl.value : ""; 
-        
         if(!url) { alert('Falta el enlace 🌸'); return; }
+
+        // --- NUEVA REGLA ESTRICTA ---
+        const isGoogleMaps = url.includes("google.com/maps") || url.includes("maps.app.goo.gl") || url.includes("goo.gl/maps");
+        
+        if (!isGoogleMaps) {
+            alert('¡Regla familiar! 🌸 Para que los pines sean exactos, busca el alojamiento o lugar en Google Maps y pega ese link aquí. (No se aceptan links directos de Airbnb/Booking).');
+            return; // Bloquea el envío inmediatamente
+        }
+        // ----------------------------
 
         const btn = document.querySelector('.btn-add');
         btn.innerText = 'Buscando...';
@@ -351,12 +398,12 @@
             const response = await fetch('/proposals', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
+                // Ya no enviamos "location_name"
                 body: JSON.stringify({ 
                     user_name: currentUser, 
                     category: category, 
                     url: url,
-                    image_url: customImg,
-                    location_name: locationName
+                    image_url: customImg
                 })
             });
 
@@ -368,10 +415,8 @@
             console.error("Error de conexión:", error);
         }
 
-        // Limpiamos los campos
         document.getElementById('linkUrl').value = '';
         if(customImgEl) customImgEl.value = '';
-        if(locationEl) locationEl.value = '';
         btn.innerText = 'Enviar al tablón';
         
         cargarPropuestas();
