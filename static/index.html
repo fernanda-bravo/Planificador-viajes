@@ -148,9 +148,21 @@
 <body>
 
 <div class="container">
-    <div class="user-profile" id="userProfile">
-        <span id="welcomeText"></span>
-        <button class="btn-small" style="margin-left: 10px;" onclick="cambiarUsuario()">Cambiar</button>
+    <div class="user-profile" id="userProfile" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <span>👥 Viajeros:</span>
+            <input type="number" id="numTravelersInput" min="1" value="2" style="width: 50px; padding: 5px; margin: 0; text-align: center;">
+            <span>📅 Del:</span>
+            <input type="date" id="startDateInput" style="padding: 4px; margin: 0;">
+            <span>al:</span>
+            <input type="date" id="endDateInput" style="padding: 4px; margin: 0;">
+            <button class="btn-small" onclick="guardarViajeros()">Guardar</button>
+            <span id="quorumInfo" style="font-size: 0.55rem; color: var(--text-dark);"></span>
+        </div>
+        <div>
+            <span id="welcomeText"></span>
+            <button class="btn-small" style="margin-left: 10px;" onclick="cerrarSesion()">Salir</button>
+        </div>
     </div>
 
     <h1>Viaje Familiar<br>🌸🍄</h1>
@@ -162,7 +174,12 @@
     </div>
     <!-- El mapa empezará oculto -->
     <div id="mapContainer" style="display: none; height: 350px; margin-bottom: 25px; border-radius: 8px; border: 3px solid var(--primary); box-shadow: 6px 6px 0px var(--shadow-color); z-index: 1;"></div>
-    
+    <div id="itineraryBox" class="form-box" style="display: none; text-align: left;">
+        <h3 style="font-family: 'Press Start 2P', cursive; font-size: 0.8rem; color: var(--primary); margin-top: 0;">
+            🗓️ Itinerario del Viaje
+        </h3>
+        <div id="itineraryContent"></div>
+    </div>
     <div class="form-box">
         <h3 style="font-family: 'Press Start 2P', cursive; font-size: 0.8rem; color: var(--primary);">✨ Proponer Idea</h3>
         <select id="propCategory" style="width: 100%; margin-bottom: 10px;">
@@ -185,25 +202,145 @@
     </div>
 </div>
 
+<div id="authModal" class="modal" style="display: none;">
+    <div class="modal-content" style="text-align: center;">
+        <h3 id="authTitle" style="margin-top: 0; font-family: 'Press Start 2P', cursive; font-size: 0.9rem; color: var(--primary);">
+            Iniciar Sesión 🌸
+        </h3>
+        <input type="text" id="authName" placeholder="Tu nombre" style="width: 90%; display: none;">
+        <input type="email" id="authEmail" placeholder="Correo electrónico" style="width: 90%;">
+        <input type="password" id="authPassword" placeholder="Contraseña" style="width: 90%;">
+        
+        <button class="btn-add" style="width: 95%; margin-top: 15px;" onclick="enviarAuth()" id="authSubmitBtn">Entrar</button>
+        
+        <p style="margin-top: 15px; font-size: 0.85rem;">
+            <span id="authToggleText">¿Primera vez aquí?</span>
+            <a href="#" onclick="alternarModoAuth(event)" style="color: var(--primary); font-weight: bold;" id="authToggleLink">Crear cuenta</a>
+        </p>
+    </div>
+</div>
+
 <script>
-    let currentUser = "";
-    let mapaInteractivo = null; // Guarda el mapa
-    let marcadoresMap = [];     // Guarda los pines
+    let currentUser = null;      // Ahora guarda { id, name, email }
+    let requiredVotesGlobal = 2; // Se actualiza desde /settings
+    let isRegisterMode = false;
+    let mapaInteractivo = null;
+    let marcadoresMap = [];
 
     function verificarUsuario() {
-        currentUser = localStorage.getItem("viajeroName");
-        if (!currentUser) {
-            currentUser = prompt("¡Bienvenido! 🌸 Ingresa tu nombre:");
-            if (!currentUser) currentUser = "Granjero Anónimo";
-            localStorage.setItem("viajeroName", currentUser);
+        const saved = localStorage.getItem("viajeroUser");
+        if (!saved) {
+            document.getElementById("authModal").style.display = "block";
+            return;
         }
-        document.getElementById("welcomeText").innerText = `Hola, ${currentUser}`;
+        currentUser = JSON.parse(saved);
+        document.getElementById("welcomeText").innerText = `Hola, ${currentUser.name}`;
+        document.getElementById("authModal").style.display = "none";
+        cargarConfiguracionYPropuestas();
+    }
+
+    function alternarModoAuth(e) {
+        e.preventDefault();
+        isRegisterMode = !isRegisterMode;
+        document.getElementById("authName").style.display = isRegisterMode ? "inline-block" : "none";
+        document.getElementById("authTitle").innerText = isRegisterMode ? "Crear Cuenta 🍄" : "Iniciar Sesión 🌸";
+        document.getElementById("authSubmitBtn").innerText = isRegisterMode ? "Registrarse" : "Entrar";
+        document.getElementById("authToggleText").innerText = isRegisterMode ? "¿Ya tienes cuenta?" : "¿Primera vez aquí?";
+        document.getElementById("authToggleLink").innerText = isRegisterMode ? "Inicia sesión" : "Crear cuenta";
+    }
+
+    async function enviarAuth() {
+        const name = document.getElementById("authName").value.trim();
+        const email = document.getElementById("authEmail").value.trim();
+        const password = document.getElementById("authPassword").value;
+
+        if (!email || !password || (isRegisterMode && !name)) {
+            alert("Por favor completa todos los campos 🌸");
+            return;
+        }
+
+        const endpoint = isRegisterMode ? "/register" : "/login";
+        const payload = isRegisterMode ? { name, email, password } : { email, password };
+
+        const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.detail || "Error de autenticación");
+            return;
+        }
+
+        localStorage.setItem("viajeroUser", JSON.stringify(data));
+        verificarUsuario();
+    }
+
+    function cerrarSesion() {
+        localStorage.removeItem("viajeroUser");
+        currentUser = null;
+        verificarUsuario();
+    }
+
+   let tripDays = [];
+
+    function generarListaDias(inicio, fin) {
+        if (!inicio || !fin) return [];
+        const dias = [];
+        let actual = new Date(inicio + "T00:00:00");
+        const limite = new Date(fin + "T00:00:00");
+        let contador = 1;
+        while (actual <= limite && contador <= 30) {
+            const iso = actual.toISOString().split("T")[0];
+            dias.push({ fecha: iso, etiqueta: `Día ${contador} (${iso})` });
+            actual.setDate(actual.getDate() + 1);
+            contador++;
+        }
+        return dias;
+    }
+
+    async function cargarConfiguracionYPropuestas() {
+        const res = await fetch("/settings");
+        const settings = await res.json();
+        requiredVotesGlobal = settings.required_votes;
+        document.getElementById("numTravelersInput").value = settings.num_travelers;
+        document.getElementById("startDateInput").value = settings.start_date || "";
+        document.getElementById("endDateInput").value = settings.end_date || "";
+        document.getElementById("quorumInfo").innerText = `(Gana con ${settings.required_votes})`;
+        tripDays = generarListaDias(settings.start_date, settings.end_date);
         cargarPropuestas();
     }
 
-    function cambiarUsuario() {
-        localStorage.removeItem("viajeroName");
-        verificarUsuario();
+    async function guardarViajeros() {
+        const num = parseInt(document.getElementById("numTravelersInput").value, 10);
+        const start_date = document.getElementById("startDateInput").value;
+        const end_date = document.getElementById("endDateInput").value;
+
+        if (!num || num < 1) { alert("Ingresa al menos 1 viajero."); return; }
+        if (start_date && end_date && start_date > end_date) {
+            alert("La fecha de inicio no puede ser posterior a la de término.");
+            return;
+        }
+
+        const res = await fetch("/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ num_travelers: num, start_date, end_date })
+        });
+        if (res.ok) cargarConfiguracionYPropuestas();
+    }
+
+    async function asignarDia(proposalId) {
+        const planned_day = document.getElementById(`day-${proposalId}`).value;
+        const time_slot = document.getElementById(`slot-${proposalId}`).value;
+        await fetch(`/proposals/${proposalId}/schedule`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ planned_day, time_slot })
+        });
+        cargarPropuestas();
     }
 
     // Este objeto recordará en qué número de foto va cada tarjeta
@@ -297,6 +434,30 @@
             }
         }
 
+        const itineraryBox = document.getElementById('itineraryBox');
+        const itineraryContent = document.getElementById('itineraryContent');
+
+        if (alojamientoGanador) {
+            itineraryBox.style.display = 'block';
+            if (tripDays.length === 0) {
+                itineraryContent.innerHTML = '<p style="font-size: 0.9rem;">👆 Selecciona las fechas de inicio y término arriba para organizar los días.</p>';
+            } else {
+                const aprobados = proposals.filter(p => p.status === 'approved' && p.category !== '🏠 Alojamiento');
+                itineraryContent.innerHTML = tripDays.map(d => {
+                    const delDia = aprobados.filter(p => p.planned_day === d.fecha);
+                    const lista = delDia.length > 0
+                        ? delDia.map(p => `<li><strong>${p.time_slot || 'Sin hora'}:</strong> ${p.category} ${p.title}</li>`).join('')
+                        : '<li style="color: #9CA3AF;">Sin panoramas ni comidas asignadas aún.</li>';
+                    return `<div style="margin-bottom: 12px; padding: 10px; background: #fdf8fa; border-radius: 6px; border: 2px dashed var(--shadow-color);">
+                                <div style="font-weight: bold; color: var(--primary); margin-bottom: 5px;">📅 ${d.etiqueta}</div>
+                                <ul style="margin: 0; padding-left: 20px; font-size: 0.9rem;">${lista}</ul>
+                            </div>`;
+                }).join('');
+            }
+        } else {
+            itineraryBox.style.display = 'none';
+        }
+
         // --- FIN LÓGICA DE FASES ---
 
         grid.innerHTML = '';
@@ -355,7 +516,7 @@
 
                         <div style="margin-top: 15px; font-size: 0.85rem; background: #fdf8fa; padding: 10px; border-radius: 5px; border: 2px dashed var(--shadow-color);">
                             <div style="color: var(--success); margin-bottom: 5px;">
-                                ⭐ A favor: <strong>${prop.yes_votes}</strong> / ${prop.required_votes}
+                                ⭐ A favor: <strong>${prop.yes_votes}</strong> / ${requiredVotesGlobal}
                             </div>
                             <div style="color: var(--danger);">
                                 ✖️ En contra: <strong>${prop.no_votes}</strong>
@@ -363,10 +524,19 @@
                         </div>
                     </div>
                     
-                    ${(!isApproved && !isRejected) ? `
-                    <div class="vote-buttons">
-                        <button class="btn-vote btn-no" onclick="votar(${prop.id}, 'shipping_bin')" title="Descartar">✖️</button>
-                        <button class="btn-vote btn-yes" onclick="votar(${prop.id}, 'stardrop')" title="¡Me encanta!">⭐</button>
+                    ${(isApproved && !isWinnerCard && tripDays.length > 0) ? `
+                    <div style="margin-top: 10px; padding-top: 10px; border-top: 2px dashed var(--shadow-color);">
+                        <select id="day-${prop.id}" onchange="asignarDia(${prop.id})" style="width: 100%; margin: 2px 0; font-size: 0.8rem;">
+                            <option value="">-- Elegir día --</option>
+                            ${tripDays.map(d => `<option value="${d.fecha}" ${prop.planned_day === d.fecha ? 'selected' : ''}>${d.etiqueta}</option>`).join('')}
+                        </select>
+                        <select id="slot-${prop.id}" onchange="asignarDia(${prop.id})" style="width: 100%; margin: 2px 0; font-size: 0.8rem;">
+                            <option value="">-- Momento --</option>
+                            <option value="🌅 Mañana" ${prop.time_slot === '🌅 Mañana' ? 'selected' : ''}>🌅 Mañana</option>
+                            <option value="🍽️ Almuerzo" ${prop.time_slot === '🍽️ Almuerzo' ? 'selected' : ''}>🍽️ Almuerzo</option>
+                            <option value="☀️ Tarde" ${prop.time_slot === '☀️ Tarde' ? 'selected' : ''}>☀️ Tarde</option>
+                            <option value="🌙 Cena" ${prop.time_slot === '🌙 Cena' ? 'selected' : ''}>🌙 Cena</option>
+                        </select>
                     </div>
                     ` : ''}
                 </div>
@@ -375,21 +545,25 @@
     }
 
     async function agregarPropuesta() {
+        // 1. Verificación local antes de intentar enviar
+        if (!currentUser || !currentUser.id) {
+            alert("No estás registrado 🌸 Inicia sesión o crea una cuenta para subir un link.");
+            document.getElementById("authModal").style.display = "block";
+            return;
+        }
+
         const url = document.getElementById('linkUrl').value;
         const category = document.getElementById('propCategory').value;
         const customImgEl = document.getElementById('customImgUrl');
         const customImg = customImgEl ? customImgEl.value : "";
-        
-        if(!url) { alert('Falta el enlace 🌸'); return; }
 
-        // --- NUEVA REGLA ESTRICTA ---
+        if (!url) { alert('Falta el enlace 🌸'); return; }
+
         const isGoogleMaps = url.includes("google.com/maps") || url.includes("maps.app.goo.gl") || url.includes("goo.gl/maps");
-        
         if (!isGoogleMaps) {
-            alert('¡Regla familiar! 🌸 Para que los pines sean exactos, busca el alojamiento o lugar en Google Maps y pega ese link aquí. (No se aceptan links directos de Airbnb/Booking).');
-            return; // Bloquea el envío inmediatamente
+            alert('¡Regla familiar! 🌸 Busca el lugar en Google Maps y pega ese link aquí.');
+            return;
         }
-        // ----------------------------
 
         const btn = document.querySelector('.btn-add');
         btn.innerText = 'Buscando...';
@@ -398,25 +572,34 @@
             const response = await fetch('/proposals', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                // Ya no enviamos "location_name"
                 body: JSON.stringify({ 
-                    user_name: currentUser, 
+                    user_id: currentUser.id, 
                     category: category, 
                     url: url,
                     image_url: customImg
                 })
             });
 
+            // 2. Si el backend dice que no existes en la BD (ej: se reinició la base de datos)
+            if (response.status === 401) {
+                const errData = await response.json();
+                alert(errData.detail);
+                cerrarSesion(); // Limpia localStorage y abre el modal de registro
+                btn.innerText = 'Enviar al tablón';
+                return;
+            }
+
             if (!response.ok) {
-                console.error("Error en el servidor:", await response.text());
-                alert("Hubo un error al guardar. Revisa la terminal de VSCode.");
+                const errData = await response.json();
+                alert(errData.detail || "Hubo un error al guardar.");
             }
         } catch (error) {
             console.error("Error de conexión:", error);
+            alert("No se pudo conectar con el servidor.");
         }
 
         document.getElementById('linkUrl').value = '';
-        if(customImgEl) customImgEl.value = '';
+        if (customImgEl) customImgEl.value = '';
         btn.innerText = 'Enviar al tablón';
         
         cargarPropuestas();
@@ -426,7 +609,7 @@
         const response = await fetch('/votes', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ proposal_id: proposalId, user_name: currentUser, vote_type: tipoVoto })
+            body: JSON.stringify({ proposal_id: proposalId, user_id: currentUser.id, vote_type: tipoVoto })
         });
         if(response.status === 400) alert("¡Ups! Ya votaste. 🍄");
         else cargarPropuestas();

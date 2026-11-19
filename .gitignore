@@ -1,4 +1,3 @@
 venv/
+planificador.db
 __pycache__/
-*.db
-.DS_Store

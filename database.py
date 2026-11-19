@@ -1,20 +1,35 @@
 import sqlite3
 
 def init_db():
-    # Conecta a la base de datos (si no existe, crea el archivo automáticamente)
     conn = sqlite3.connect("planificador.db")
     cursor = conn.cursor()
 
-    # 1. Tabla de Usuarios (Granjeros/Viajeros)
+    # 1. Tabla de Usuarios con registro formal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            avatar_file TEXT
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            avatar_file TEXT DEFAULT 'default.png'
         )
     ''')
 
-    # 2. Tabla de Propuestas
+    # 2. Configuración del viaje (viajeros + fechas)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trip_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            num_travelers INTEGER NOT NULL DEFAULT 2,
+            start_date TEXT DEFAULT '',
+            end_date TEXT DEFAULT ''
+        )
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO trip_settings (id, num_travelers, start_date, end_date)
+        VALUES (1, 2, '', '')
+    ''')
+
+    # 3. Tabla de Propuestas (con día y bloque horario)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,15 +41,16 @@ def init_db():
             description TEXT, 
             price REAL,
             status TEXT DEFAULT 'pending',
-            required_votes INTEGER DEFAULT 2,
             lat REAL, 
-            lon REAL, 
+            lon REAL,
+            planned_day TEXT DEFAULT '',
+            time_slot TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (proposed_by_id) REFERENCES users(id)
         )
     ''')
 
-    # 3. Tabla de Votación (Evita votos dobles con UNIQUE)
+    # 4. Tabla de Votación (igual que antes)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS votes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +64,6 @@ def init_db():
         )
     ''')
 
-    # Guardar cambios y cerrar
     conn.commit()
     conn.close()
     print("🌱 Base de datos 'planificador.db' inicializada con éxito.")

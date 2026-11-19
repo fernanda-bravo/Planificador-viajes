@@ -8,6 +8,8 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 import os
+import hashlib
+import secrets
 
 # Inicializamos la app
 app = FastAPI(title="Planificador de Viajes API")
@@ -18,45 +20,127 @@ def get_db():
     conn.row_factory = sqlite3.Row  # Esto permite leer los resultados como diccionarios
     return conn
 
-# Definimos cómo deben llegar los datos para crear un usuario (Pydantic)
-class UserCreate(BaseModel):
+# --- FUNCIONES DE CONTRASEÑA ---
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100_000).hex()
+    return f"{salt}${hashed}"
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    salt, hashed = stored_hash.split('$')
+    check = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100_000).hex()
+    return secrets.compare_digest(check, hashed)
+
+# --- MODELOS ACTUALIZADOS ---
+class UserRegister(BaseModel):
     name: str
+    email: str
+    password: str
     avatar_file: str = "default.png"
 
-# --- MODELOS DE DATOS ---
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class TripSettingsUpdate(BaseModel):
+    num_travelers: int
+    start_date: str = ""
+    end_date: str = ""
+
+class ScheduleUpdate(BaseModel):
+    planned_day: str = ""
+    time_slot: str = ""
+
 class ProposalCreate(BaseModel):
-    user_name: str 
+    user_id: int  # Ahora usamos el ID del usuario logueado
     category: str 
     url: str
     title: str = ""
     image_url: str = ""
-    description: str = "" # Nueva variable
+    description: str = ""
     price: float = 0.0
-    required_votes: int = 2 # Consenso familiar en 15 votos
-    lat: float | None = None  # Puede estar vacío si no es un mapa
+    lat: float | None = None
     lon: float | None = None
     location_name: str = ""
 
 class VoteCreate(BaseModel):
     proposal_id: int
-    user_name: str  # ¡Aquí también pedimos el nombre!
+    user_id: int  # Usamos el ID del usuario logueado
     vote_type: str
 
-# Función auxiliar para buscar o crear al usuario por su nombre automáticamente
-def get_or_create_user(cursor, name: str) -> int:
-    name = name.strip().title() # Limpia espacios y pone mayúscula (ej: " fer " -> "Fer")
-    cursor.execute("SELECT id FROM users WHERE name = ?", (name,))
-    user = cursor.fetchone()
-    if user:
-        return user[0] # Si existe, devuelve su ID interno
-    else:
-        cursor.execute("INSERT INTO users (name, avatar_file) VALUES (?, ?)", (name, "default.png"))
-        return cursor.lastrowid # Si no existe, lo crea y devuelve el nuevo ID
+@app.post("/register")
+def register(user: UserRegister):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO users (name, email, password_hash, avatar_file) VALUES (?, ?, ?, ?)",
+            (user.name.strip(), user.email.strip().lower(), hash_password(user.password), user.avatar_file)
+        )
+        conn.commit()
+        user_id = cursor.lastrowid
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Ese correo ya está registrado.")
+    conn.close()
+    return {"id": user_id, "name": user.name.strip(), "email": user.email.strip().lower()}
 
-# Crea la carpeta 'static' automáticamente si no existe
-if not os.path.exists("static"):
-    os.makedirs("static")
+@app.post("/login")
+def login(credentials: UserLogin):
+    conn = get_db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE email = ?", (credentials.email.strip().lower(),)
+    ).fetchone()
+    conn.close()
 
+    if not user or not verify_password(credentials.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Correo o contraseña incorrectos.")
+
+    return {"id": user["id"], "name": user["name"], "email": user["email"], "avatar_file": user["avatar_file"]}
+
+# --- CONFIGURACIÓN DE VIAJEROS ---
+@app.get("/settings")
+def get_settings():
+    conn = get_db()
+    row = conn.execute("SELECT num_travelers, start_date, end_date FROM trip_settings WHERE id = 1").fetchone()
+    conn.close()
+    num = row["num_travelers"] if row else 2
+    return {
+        "num_travelers": num,
+        "required_votes": (num // 2) + 1,
+        "start_date": row["start_date"] if row else "",
+        "end_date": row["end_date"] if row else ""
+    }
+
+@app.put("/settings")
+def update_settings(settings: TripSettingsUpdate):
+    if settings.num_travelers < 1:
+        raise HTTPException(status_code=400, detail="Debe haber al menos 1 viajero.")
+    conn = get_db()
+    conn.execute(
+        "UPDATE trip_settings SET num_travelers = ?, start_date = ?, end_date = ? WHERE id = 1",
+        (settings.num_travelers, settings.start_date, settings.end_date)
+    )
+    conn.commit()
+    conn.close()
+    return {
+        "num_travelers": settings.num_travelers,
+        "required_votes": (settings.num_travelers // 2) + 1,
+        "start_date": settings.start_date,
+        "end_date": settings.end_date
+    }
+
+# --- NUEVO: ASIGNAR DÍA Y HORARIO A UNA PROPUESTA ---
+@app.put("/proposals/{proposal_id}/schedule")
+def schedule_proposal(proposal_id: int, schedule: ScheduleUpdate):
+    conn = get_db()
+    conn.execute(
+        "UPDATE proposals SET planned_day = ?, time_slot = ? WHERE id = ?",
+        (schedule.planned_day, schedule.time_slot, proposal_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"mensaje": "¡Itinerario actualizado! 📅"}
 # Monta la carpeta para archivos web
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -72,16 +156,7 @@ def get_users():
     conn.close()
     return [dict(u) for u in users]
 
-# Endpoint para agregar un nuevo usuario
-@app.post("/users")
-def create_user(user: UserCreate):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO users (name, avatar_file) VALUES (?, ?)", (user.name, user.avatar_file))
-    conn.commit()
-    user_id = cursor.lastrowid
-    conn.close()
-    return {"id": user_id, "name": user.name, "mensaje": "¡Granjero registrado con éxito!"}
+
 
 def obtener_foto_rapidapi(nombre_lugar: str):
     url = "https://local-business-data.p.rapidapi.com/search" 
@@ -186,29 +261,24 @@ def scrape_link_data(url: str):
 
 @app.post("/proposals")
 def create_proposal(prop: ProposalCreate):
-    if not prop.title or not prop.image_url:
-        scraped_data = scrape_link_data(prop.url)
-        prop.title = prop.title or scraped_data["title"]
-        prop.image_url = prop.image_url or scraped_data["image_url"]
-        prop.description = prop.description or scraped_data["description"]
-        prop.lat = prop.lat or scraped_data.get("lat")
-        prop.lon = prop.lon or scraped_data.get("lon")
-
-   
-
     conn = get_db()
     cursor = conn.cursor()
-    user_id = get_or_create_user(cursor, prop.user_name)
-    
-    cursor.execute('''
-        INSERT INTO proposals (proposed_by_id, category, title, url, image_url, description, price, required_votes, lat, lon)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, prop.category, prop.title, prop.url, prop.image_url, prop.description, prop.price, prop.required_votes, prop.lat, prop.lon))
-    conn.commit()
-    prop_id = cursor.lastrowid
+
+    # Verifica que el usuario realmente exista en la base de datos
+    user_exists = cursor.execute("SELECT id FROM users WHERE id = ?", (prop.user_id,)).fetchone()
+    if not user_exists:
+        conn.close()
+        raise HTTPException(
+            status_code=401,
+            detail="No estás registrado. Crea una cuenta o inicia sesión antes de subir un link."
+        )
+
     conn.close()
-    
-    return {"id": prop_id, "title": prop.title}
+
+    # --- A partir de aquí sigue igual (scraping + INSERT) ---
+    if not prop.title or not prop.image_url:
+        scraped_data = scrape_link_data(prop.url)
+        ...
 
 @app.get("/proposals")
 def get_proposals():
@@ -229,25 +299,20 @@ def get_proposals():
 def cast_vote(vote: VoteCreate):
     conn = get_db()
     cursor = conn.cursor()
-    
-    user_id = get_or_create_user(cursor, vote.user_name)
 
     try:
         cursor.execute(
             "INSERT INTO votes (proposal_id, user_id, vote_type) VALUES (?, ?, ?)",
-            (vote.proposal_id, user_id, vote.vote_type)
+            (vote.proposal_id, vote.user_id, vote.vote_type)
         )
     except sqlite3.IntegrityError:
         conn.close()
         raise HTTPException(status_code=400, detail="¡Ya votaste por esta opción!")
 
-    # Consultamos cuántos votos se requieren para esta tarjeta
-    req_votes = cursor.execute(
-        "SELECT required_votes FROM proposals WHERE id = ?",
-        (vote.proposal_id,)
-    ).fetchone()[0]
+    # Calculamos el quórum dinámicamente según la cantidad actual de viajeros
+    num_travelers = cursor.execute("SELECT num_travelers FROM trip_settings WHERE id = 1").fetchone()[0]
+    req_votes = (num_travelers // 2) + 1  # Si prefieres unanimidad, cambia esto por: req_votes = num_travelers
 
-    # 1. Si el voto es a favor, revisamos si aprobó
     if vote.vote_type == 'stardrop':
         stardrops = cursor.execute(
             "SELECT COUNT(*) FROM votes WHERE proposal_id = ? AND vote_type = 'stardrop'",
@@ -260,7 +325,6 @@ def cast_vote(vote: VoteCreate):
             conn.close()
             return {"mensaje": "¡Consenso alcanzado!", "status": "approved"}
 
-    # 2. NUEVO: Si el voto es en contra, revisamos si se descarta
     elif vote.vote_type == 'shipping_bin':
         shipping_bins = cursor.execute(
             "SELECT COUNT(*) FROM votes WHERE proposal_id = ? AND vote_type = 'shipping_bin'",
